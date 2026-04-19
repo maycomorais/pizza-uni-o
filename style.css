@@ -1215,13 +1215,49 @@ footer {
 .pizza-sabor-tipo-badge {
     font-size: 0.58rem;
     font-weight: 800;
-    padding: 1px 5px;
+    padding: 1px 6px;
     border-radius: 6px;
     white-space: nowrap;
     flex-shrink: 0;
+    display: inline-block;
 }
-.pizza-sabor-tipo-badge.tipo-especial { background: #fff3cd; color: #856404; }
-.pizza-sabor-tipo-badge.tipo-doce { background: #fce4ec; color: #880e4f; }
+/* Variantes de tipo */
+.pizza-sabor-tipo-badge.tipo-especial  { background: #fff3cd; color: #856404; }
+.pizza-sabor-tipo-badge.tipo-doce      { background: #fce4ec; color: #880e4f; }
+.pizza-sabor-tipo-badge.tipo-premium   { background: #ede9fe; color: #4c1d95; }
+.pizza-sabor-tipo-badge.tipo-vegano    { background: #d1fae5; color: #065f46; }
+.pizza-sabor-tipo-badge.tipo-picante   { background: #fee2e2; color: #991b1b; }
+.pizza-sabor-tipo-badge.tipo-default   { background: #f3f4f6; color: #374151; }
+
+/* Linha de cabeçalho do sabor: tipo badge alinhado à direita */
+.pizza-sabor-header-row {
+    display: flex;
+    justify-content: flex-end;
+    min-height: 14px;
+    margin-bottom: 1px;
+}
+
+/* Preço do sabor — duas variantes */
+.pizza-sabor-preco--premium {
+    display: inline-block;
+    font-size: 0.72rem;
+    color: #fff;
+    font-weight: 800;
+    background: var(--primary);
+    padding: 2px 7px;
+    border-radius: 8px;
+    margin-top: 4px;
+}
+.pizza-sabor-preco--incluso {
+    display: inline-block;
+    font-size: 0.68rem;
+    color: #27ae60;
+    font-weight: 700;
+    background: #d1fae5;
+    padding: 2px 7px;
+    border-radius: 8px;
+    margin-top: 4px;
+}
 
 /* Tag de fração (1/2, 2/4 etc.) */
 .pizza-fracao-tag {

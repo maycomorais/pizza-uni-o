@@ -191,10 +191,9 @@ function mostrarMensagemEntregaConfirmada() {
 // ===== ATUALIZAR FUNÇÃO mostrarTracker() EXISTENTE =====
 // SUBSTITUA a função mostrarTracker() por esta versão atualizada:
 
-function mostrarTracker(status, uidPedido) {
+function mostrarTracker(status, uidPedido, motoboy = null) {
   // Usa o novo sistema de tracking (track-order-card)
-  // O elemento 'pedido-tracker' é do sistema antigo — redireciona para o novo
-  atualizarTrackingVisual(status, null);
+  atualizarTrackingVisual(status, motoboy);
 
   const card = document.getElementById("track-order-card");
   if (card) card.style.display = "block";
@@ -521,6 +520,21 @@ async function verificarHorario() {
   if (data.cor_primaria) {
     document.documentElement.style.setProperty("--primary", data.cor_primaria);
   }
+}
+
+// ── Auto-scroll do modal ao revelar nova seção ───────────────────────────────
+// Rola a área de scroll do modal até deixar `el` visível com espaço no topo.
+function _scrollModalParaElemento(el) {
+  if (!el) return;
+  const area = document.querySelector(".modal-scroll-area");
+  if (!area) return;
+  // Pequeno delay para o browser ter renderizado o elemento antes de medir
+  requestAnimationFrame(() => {
+    const areaRect = area.getBoundingClientRect();
+    const elRect   = el.getBoundingClientRect();
+    const offset   = elRect.top - areaRect.top + area.scrollTop - 16; // 16px de respiro
+    area.scrollTo({ top: offset, behavior: "smooth" });
+  });
 }
 
 // ── Filtra opções de pagamento no checkout conforme features_ativas.pagamentos ──
@@ -910,35 +924,30 @@ function _renderMontavel(item, cfg, container) {
     h4.style.cssText = "margin-top:10px; font-size:0.95rem; color:#555;";
     container.appendChild(h4);
 
-    // Suporta itens como string simples ou como {nome, ativo}
-    const itensAtivos = (etapa.itens || []).filter(it =>
-      typeof it === "string" ? true : it.ativo !== false
-    );
-    itensAtivos.forEach((ingrediente) => {
-      const nome = typeof ingrediente === "string" ? ingrediente : ingrediente.nome;
+    etapa.itens.forEach((ingrediente) => {
       const label = document.createElement("label");
       label.style.cssText =
         "display:block; padding:7px 10px; margin-bottom:3px; border:1px solid #eee; border-radius:8px; cursor:pointer;";
       const input = document.createElement("input");
       input.type = "checkbox";
-      input.value = nome;
+      input.value = ingrediente;
       input.style.marginRight = "8px";
       input.onchange = () => {
         if (!itensMontagem[idxEtapa]) itensMontagem[idxEtapa] = [];
         if (input.checked) {
           if (itensMontagem[idxEtapa].length < etapa.max) {
-            itensMontagem[idxEtapa].push(nome);
+            itensMontagem[idxEtapa].push(ingrediente);
           } else {
             alert(`Máximo: ${etapa.max} itens para "${etapa.titulo}"`);
             input.checked = false;
           }
         } else {
-          const idx = itensMontagem[idxEtapa].indexOf(nome);
+          const idx = itensMontagem[idxEtapa].indexOf(ingrediente);
           if (idx > -1) itensMontagem[idxEtapa].splice(idx, 1);
         }
       };
       label.appendChild(input);
-      label.appendChild(document.createTextNode(nome));
+      label.appendChild(document.createTextNode(ingrediente));
       container.appendChild(label);
     });
   });
@@ -958,15 +967,12 @@ function _renderMontavel(item, cfg, container) {
 
 function _renderPizza(cfg, container) {
   if (!cfg) return;
+  // Suporta ambos: cfg.pizza (estrutura nova) ou cfg direto (estrutura antigos do BD)
   const p = cfg.pizza || cfg;
-  if (!p.tamanhos) return;
+  if (!p.tamanhos) return; // Valida que tem tamanhos
   _pizzaConfig.p = p;
-  _pizzaConfig.tipoSelecionado = null;
 
-  const tipos = (p.tipos_pizza || []).filter(t => t && t.nome);
-  const temTipos = tipos.length > 1;
-
-  /* ── PASSO 1: Tamanho ────────────────────────────── */
+  /* ── PASSO 1: Tamanho ─────────────────────────────── */
   const secTam = document.createElement("section");
   secTam.className = "pizza-step";
   secTam.innerHTML = `
@@ -977,13 +983,30 @@ function _renderPizza(cfg, container) {
     <div class="pizza-size-grid" id="pizza-size-grid"></div>`;
   container.appendChild(secTam);
 
-  // Passo intermediário: Tipo (só quando há mais de 1 tipo)
-  const passoTipo = document.createElement("div");
-  passoTipo.id = "pizza-passo-tipo";
-  passoTipo.style.display = "none";
-  container.appendChild(passoTipo);
+  const sizeGrid = secTam.querySelector("#pizza-size-grid");
+  (p.tamanhos || []).forEach((tam) => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "pizza-size-card";
+    card.dataset.nome = tam.nome;
+    card.innerHTML = `
+      <div class="pizza-size-name">${tam.nome}</div>
+      <div class="pizza-size-info">${tam.fatias} fatias</div>
+      <div class="pizza-size-info">⌀ ${tam.cm}cm</div>
+      <div class="pizza-size-price">Gs ${(tam.preco || 0).toLocaleString("es-PY")}</div>`;
+    card.onclick = () => {
+      sizeGrid
+        .querySelectorAll(".pizza-size-card")
+        .forEach((c) => c.classList.remove("selected"));
+      card.classList.add("selected");
+      _pizzaConfig.tamanhoSelecionado = tam;
+      _revelarPasso2(p, container);
+      _atualizarPrecoPizza();
+    };
+    sizeGrid.appendChild(card);
+  });
 
-  // Passos 2-4 progressivos
+  /* ── Passos 2, 3, 4 aparecerão progressivamente ─── */
   const passo2 = document.createElement("div");
   passo2.id = "pizza-passo2";
   passo2.style.display = "none";
@@ -998,96 +1021,9 @@ function _renderPizza(cfg, container) {
   passo4.id = "pizza-passo4";
   passo4.style.display = "none";
   container.appendChild(passo4);
-
-  const sizeGrid = secTam.querySelector("#pizza-size-grid");
-  (p.tamanhos || []).forEach((tam) => {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "pizza-size-card";
-    card.dataset.nome = tam.nome;
-    // Preço de exibição: mostra "a partir de X" se houver precos por tipo
-    const precos = tam.precos && Object.keys(tam.precos).length ? tam.precos : null;
-    const precoBase = precos
-      ? Math.min(...Object.values(precos).filter(v => v > 0))
-      : (tam.preco || 0);
-    const precoTxt = precos
-      ? `<span style="font-size:0.65rem;opacity:.75">a partir de</span><br>Gs ${precoBase.toLocaleString("es-PY")}`
-      : `Gs ${precoBase.toLocaleString("es-PY")}`;
-    card.innerHTML = `
-      <div class="pizza-size-name">${tam.nome}</div>
-      ${tam.fatias ? `<div class="pizza-size-info">${tam.fatias} fatias</div>` : ""}
-      ${tam.cm    ? `<div class="pizza-size-info">⌀ ${tam.cm}cm</div>` : ""}
-      <div class="pizza-size-price">${precoTxt}</div>`;
-    card.onclick = () => {
-      sizeGrid.querySelectorAll(".pizza-size-card").forEach(c => c.classList.remove("selected"));
-      card.classList.add("selected");
-      _pizzaConfig.tamanhoSelecionado = tam;
-      _pizzaConfig.tipoSelecionado = null;
-      // Reset passos seguintes
-      [passoTipo, passo2, passo3, passo4].forEach(el => {
-        el.innerHTML = "";
-        el.style.display = "none";
-      });
-      _pizzaConfig.numSabores = null;
-      _pizzaConfig.sabores = [];
-      if (temTipos) {
-        _revelarPassoTipo(p, container, tipos);
-      } else {
-        _revelarPasso2(p, container);
-      }
-      _atualizarPrecoPizza();
-    };
-    sizeGrid.appendChild(card);
-  });
 }
 
-/* Passo intermédio: Tipo de pizza (Salgada / Doce / etc.) */
-function _revelarPassoTipo(p, container, tipos) {
-  const passoTipo = container.querySelector("#pizza-passo-tipo") ||
-                    document.getElementById("pizza-passo-tipo");
-  if (!passoTipo) return;
-
-  const tam = _pizzaConfig.tamanhoSelecionado;
-  passoTipo.innerHTML = `
-    <section class="pizza-step">
-      <div class="pizza-step-header">
-        <span class="pizza-step-num">2</span>
-        <span>Tipo de pizza</span>
-      </div>
-      <div class="pizza-divisao-grid" id="pizza-tipo-grid">
-        ${tipos.map(t => {
-          const preco = tam?.precos?.[t.nome];
-          return `<button type="button" class="pizza-divisao-btn pizza-tipo-btn" data-tipo="${t.nome}"
-              onclick="_selecionarTipoPizza('${t.nome.replace(/'/g,"\'")}', this)">
-            <div class="pizza-divisao-icone">🍕</div>
-            <div class="pizza-divisao-nome">${t.nome}</div>
-            ${preco ? `<div style="font-size:0.7rem;color:var(--primary);font-weight:700">Gs ${preco.toLocaleString("es-PY")}</div>` : ""}
-          </button>`;
-        }).join("")}
-      </div>
-    </section>`;
-  passoTipo.style.display = "block";
-  // Esconde sabores/divisao anteriores
-  const p2 = container.querySelector("#pizza-passo2") || document.getElementById("pizza-passo2");
-  const p3 = container.querySelector("#pizza-passo3") || document.getElementById("pizza-passo3");
-  const p4 = container.querySelector("#pizza-passo4") || document.getElementById("pizza-passo4");
-  [p2, p3, p4].forEach(el => { if (el) { el.innerHTML = ""; el.style.display = "none"; } });
-}
-
-function _selecionarTipoPizza(tipo, el) {
-  document.querySelectorAll(".pizza-tipo-btn").forEach(b => b.classList.remove("selected"));
-  if (el) el.classList.add("selected");
-  _pizzaConfig.tipoSelecionado = tipo;
-  _pizzaConfig.numSabores = null;
-  _pizzaConfig.sabores = [];
-  // Atualiza preço com o valor do tipo selecionado
-  _atualizarPrecoPizza();
-  // Revela seleção de quantos sabores
-  const container = el?.closest("#modal-options") || document.getElementById("modal-options");
-  _revelarPasso2(_pizzaConfig.p, container);
-}
-
-/* Passo "Quantos sabores?": numeração dinâmica conforme tem tipo ou não */
+/* Passo 2: Quantos sabores? */
 function _revelarPasso2(p, container) {
   const passo2 =
     container.querySelector("#pizza-passo2") ||
@@ -1097,39 +1033,49 @@ function _revelarPasso2(p, container) {
   _pizzaConfig.sabores = [];
 
   const maxLoja = _pizzaConfig.tamanhoSelecionado?.max_sabores || p.max_sabores || 1;
-  // Só mostra opções de divisão se max > 1; senão vai direto para sabores (1 sabor)
-  if (maxLoja === 1) {
-    _selecionarDivisao(1);
-    return;
-  }
-
   const opcoes = Array.from({ length: maxLoja }, (_, i) => i + 1);
-  const labels = { 1: "Inteira", 2: "Meia a Meia", 3: "3 Sabores", 4: "4 Sabores" };
-
-  // Numeração: se há tipo extra, este é o passo 3; senão é o 2
-  const temTipo = (p.tipos_pizza || []).filter(t => t && t.nome).length > 1;
-  const stepNum = temTipo ? 3 : 2;
+  const labels = {
+    1: "Inteira",
+    2: "Meia a Meia",
+    3: "3 Sabores",
+    4: "4 Sabores",
+  };
 
   passo2.innerHTML = `
     <section class="pizza-step">
       <div class="pizza-step-header">
-        <span class="pizza-step-num">${stepNum}</span>
+        <span class="pizza-step-num">2</span>
         <span>Quantos sabores?</span>
       </div>
       <div class="pizza-divisao-grid">
-        ${opcoes.map(n => `
+        ${opcoes
+          .map(
+            (n) => `
           <button type="button" class="pizza-divisao-btn" data-n="${n}" onclick="_selecionarDivisao(${n})">
             <div class="pizza-divisao-icone">${_iconePizza(n)}</div>
             <div class="pizza-divisao-nome">${labels[n] || n + " Sabores"}</div>
-          </button>`).join("")}
+          </button>`,
+          )
+          .join("")}
       </div>
     </section>`;
   passo2.style.display = "block";
-
-  const p3 = container.querySelector("#pizza-passo3") || document.getElementById("pizza-passo3");
-  const p4 = container.querySelector("#pizza-passo4") || document.getElementById("pizza-passo4");
-  if (p3) { p3.innerHTML = ""; p3.style.display = "none"; }
-  if (p4) { p4.innerHTML = ""; p4.style.display = "none"; }
+  _scrollModalParaElemento(passo2);
+  // Esconde passos seguintes ao reeditar
+  const p3 =
+    container.querySelector("#pizza-passo3") ||
+    document.getElementById("pizza-passo3");
+  const p4 =
+    container.querySelector("#pizza-passo4") ||
+    document.getElementById("pizza-passo4");
+  if (p3) {
+    p3.innerHTML = "";
+    p3.style.display = "none";
+  }
+  if (p4) {
+    p4.innerHTML = "";
+    p4.style.display = "none";
+  }
 }
 
 function _iconePizza(n) {
@@ -1137,11 +1083,12 @@ function _iconePizza(n) {
   return icons[n] || "🍕";
 }
 
-/* Passo Escolher sabores */
+/* Passo 3: Escolher sabores */
 function _selecionarDivisao(n) {
   _pizzaConfig.numSabores = n;
   _pizzaConfig.sabores = new Array(n).fill(null);
 
+  // Destaca botão selecionado
   document.querySelectorAll(".pizza-divisao-btn").forEach((b) => {
     b.classList.toggle("selected", parseInt(b.dataset.n) === n);
   });
@@ -1149,26 +1096,16 @@ function _selecionarDivisao(n) {
   const p3 = document.getElementById("pizza-passo3");
   if (!p3) return;
   const p = _pizzaConfig.p;
-  const tipoSel = _pizzaConfig.tipoSelecionado;
-  const tipos = (p.tipos_pizza || []).filter(t => t && t.nome);
-  const temTipos = tipos.length > 1;
 
-  // Filtra: por tipo selecionado (se houver) E exclui pausados (ativo === false)
-  const saboresFiltrados = (p.sabores || []).filter(s => {
-    if (s.ativo === false) return false;           // pausado
-    if (!temTipos) return true;                    // sem tipos → mostra tudo
-    if (!tipoSel) return true;                     // tipo ainda não escolhido
-    if (!s.tipo) return true;                      // sabor sem tipo → mostra em todos
-    return s.tipo === tipoSel;
-  });
-
-  // Numeração: passo 4 se tem tipo, passo 3 se não
-  const stepNum = temTipos ? 4 : 3;
+  // Filtra sabores pelo tipo (Salgada/Doce) se definido
+  const saboresFiltrados = (p.sabores || []).filter(
+    (s) => !s.tipo || !p.tipos || p.tipos.length <= 1,
+  );
 
   // Gera HTML para escolha de cada slot de sabor
   let html = `<section class="pizza-step">
     <div class="pizza-step-header">
-      <span class="pizza-step-num">${stepNum}</span>
+      <span class="pizza-step-num">3</span>
       <span>Escolha ${n === 1 ? "o sabor" : `os ${n} sabores`}</span>
     </div>
     <p class="pizza-step-hint">
@@ -1187,11 +1124,30 @@ function _selecionarDivisao(n) {
       ${saboresFiltrados
         .map((s) => {
           const sfEsc = (s.nome || "").replace(/'/g, "\\'");
+          // Tipo → badge colorido
+          const tipoBadgeClass = {
+            "doce":     "tipo-doce",
+            "especial": "tipo-especial",
+            "premium":  "tipo-premium",
+            "vegano":   "tipo-vegano",
+            "picante":  "tipo-picante",
+          }[(s.tipo || "").toLowerCase()] || "tipo-default";
+          const tipoBadge = s.tipo
+            ? `<span class="pizza-sabor-tipo-badge ${tipoBadgeClass}">${s.tipo}</span>`
+            : "";
+          // Preço: premium (>0) → mostra "+Gs X"; incluso (0) → "Incluso" se houver mix
+          const temPremium = (p.sabores || []).some(sb => (sb.preco || 0) > 0);
+          const precoLabel = (s.preco || 0) > 0
+            ? `<span class="pizza-sabor-preco pizza-sabor-preco--premium">+Gs ${s.preco.toLocaleString("es-PY")}</span>`
+            : (temPremium ? `<span class="pizza-sabor-preco pizza-sabor-preco--incluso">Incluso</span>` : "");
+          const descHtml = s.desc ? `<div class="pizza-sabor-desc">${s.desc}</div>` : "";
           return `<button type="button" class="pizza-sabor-item" data-slot="${slot}" data-nome="${s.nome}" data-preco="${s.preco || 0}" onclick="_selecionarSaborSlot(${slot}, '${sfEsc}', ${s.preco || 0}, this)">
           ${s.img ? `<img src="${s.img}" class="pizza-sabor-img" alt="${s.nome}">` : `<div class="pizza-sabor-emoji">🍕</div>`}
           <div class="pizza-sabor-info">
+            <div class="pizza-sabor-header-row">${tipoBadge}</div>
             <div class="pizza-sabor-nome">${s.nome}</div>
-            ${s.preco ? `<div class="pizza-sabor-preco">Gs ${(s.preco || 0).toLocaleString("es-PY")}</div>` : ""}
+            ${descHtml}
+            ${precoLabel}
           </div>
         </button>`;
         })
@@ -1202,6 +1158,7 @@ function _selecionarDivisao(n) {
 
   p3.innerHTML = html;
   p3.style.display = "block";
+  _scrollModalParaElemento(p3);
 
   // Borda aparece depois
   const p4 = document.getElementById("pizza-passo4");
@@ -1235,6 +1192,10 @@ function _selecionarSaborSlot(slot, nome, preco, el) {
   const cheios = _pizzaConfig.sabores.filter(Boolean).length;
   if (cheios >= n) {
     _revelarPasso4Borda();
+  } else {
+    // Scroll para o próximo slot ainda vazio
+    const proximoSlot = document.getElementById(`pizza-slot-${slot + 1}`);
+    if (proximoSlot) _scrollModalParaElemento(proximoSlot.closest("section") || proximoSlot);
   }
   _atualizarPrecoPizza();
   _atualizarResumo();
@@ -1274,6 +1235,7 @@ function _revelarPasso4Borda() {
     </div>
   </section>`;
   p4.style.display = "block";
+  _scrollModalParaElemento(p4);
 }
 
 function _pizzaSelecionarBorda(nome, preco, el) {
@@ -1318,11 +1280,34 @@ function _atualizarResumo() {
   const tam = _pizzaConfig.tamanhoSelecionado;
 
   el.style.display = "block";
+  const n = _pizzaConfig.numSabores || 1;
+  // Sabor mais caro prevalece — mostra qual definiu o preço
+  const precoMaisCaro = Math.max(...saboresOk.map(s => s.preco || 0));
+  const saboresLinhas = saboresOk.map((s, i) => {
+    const frac = n > 1 ? `${i + 1}/${n} ` : "";
+    const ehOmaisCaro = n > 1 && (s.preco || 0) === precoMaisCaro && precoMaisCaro > 0;
+    const precoTag = (s.preco || 0) > 0
+      ? `<span style="font-size:0.7rem;background:var(--primary);color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px">+Gs ${s.preco.toLocaleString("es-PY")}${ehOmaisCaro ? " ★" : ""}</span>`
+      : "";
+    return `<div class="pizza-resumo-linha">
+      <span>${frac}Sabor</span>
+      <span>${s.nome}${precoTag}</span>
+    </div>`;
+  }).join("");
+
+  // Nota quando sabor mais caro prevalece em pizza dividida
+  const notaPrev = n > 1 && precoMaisCaro > 0
+    ? `<div style="font-size:0.68rem;color:#888;padding:4px 14px;background:#fffbf0;border-top:1px solid #fde8d0">
+         ★ Prevalece o preço do sabor mais caro
+       </div>`
+    : "";
+
   el.innerHTML = `
     <div class="pizza-resumo-header">🍕 Resumo da sua pizza</div>
-    ${tam ? `<div class="pizza-resumo-linha"><span>Tamanho</span><span>${tam.nome} (${tam.fatias} fatias · ⌀${tam.cm}cm)</span></div>` : ""}
-    ${saboresOk.map((s, i) => `<div class="pizza-resumo-linha"><span>${_pizzaConfig.numSabores > 1 ? `${i + 1}/${_pizzaConfig.numSabores} Sabor` : "Sabor"}</span><span>${s.nome}</span></div>`).join("")}
+    ${tam ? `<div class="pizza-resumo-linha"><span>Tamanho</span><span>${tam.nome}${tam.fatias ? ` (${tam.fatias} fatias` : ""}${tam.cm ? ` · ⌀${tam.cm}cm` : ""}${tam.fatias ? ")" : ""}</span></div>` : ""}
+    ${saboresLinhas}
     ${_pizzaConfig.bordaConfig ? `<div class="pizza-resumo-linha"><span>Borda</span><span>${_pizzaConfig.bordaConfig.nome}</span></div>` : ""}
+    ${notaPrev}
     <div class="pizza-resumo-total"><span>Total</span><span>Gs ${((precoBase + precoBorda) * (qtd || 1)).toLocaleString("es-PY")}</span></div>`;
 }
 
@@ -1386,14 +1371,15 @@ function _atualizarPrecoPizza() {
     return;
   }
   const saboresOk = (_pizzaConfig.sabores || []).filter(Boolean);
-  const tam = _pizzaConfig.tamanhoSelecionado;
-  const tipoSel = _pizzaConfig.tipoSelecionado;
-  // Preço do tamanho: se há preços por tipo usa o selecionado, senão usa tam.preco (mínimo)
+  const tam      = _pizzaConfig.tamanhoSelecionado;
+  const tipoSel  = _pizzaConfig.tipoSelecionado;
+  // Preço do tamanho: prefere o do tipo selecionado se existir
   const tamPreco = (tipoSel && tam?.precos?.[tipoSel])
     ? tam.precos[tipoSel]
     : (tam?.preco || prodAtual?.preco || 0);
-  const saborExtra = saboresOk.reduce((acc, s) => Math.max(acc, s.preco || 0), 0);
-  const precoBase  = tamPreco + saborExtra;
+  // Prevalecer o sabor mais caro (regra de ouro da pizza dividida)
+  const saborMaisCaro = saboresOk.reduce((acc, s) => Math.max(acc, s.preco || 0), 0);
+  const precoBase  = tamPreco + saborMaisCaro;
   const precoBorda = _pizzaConfig.bordaConfig?.preco || 0;
   const total = (precoBase + precoBorda + extrasTotal) * qtd;
   document.getElementById("modal-price").innerText =
@@ -1406,8 +1392,7 @@ let _variacaoSelecionada = null; // { nome, preco, img }
 
 function _renderVariacoes(item, cfg, container) {
   _variacaoSelecionada = null;
-  const _todosVar = cfg && cfg.variacoes ? cfg.variacoes : [];
-  const variacoes = _todosVar.filter(v => v.ativo !== false);
+  const variacoes = cfg && cfg.variacoes ? cfg.variacoes : [];
 
   const sec = document.createElement("div");
   sec.className = "var-section";
@@ -1499,7 +1484,10 @@ function _renderShake(cfg, container) {
       btn.classList.add("selected");
       _shakeConfig.tamanho = tam;
       _atualizarPrecoPizza();
-      if (sabores.length > 0) passo2El.style.display = "block";
+      if (sabores.length > 0) {
+        passo2El.style.display = "block";
+        _scrollModalParaElemento(passo2El);
+      }
     };
     tamGrid.appendChild(btn);
   });
@@ -1593,7 +1581,10 @@ function _renderSorvete(cfg, container) {
       // Desmarca todos
       container.querySelectorAll("#sorv-sabor-grid .var-card").forEach(c => c.classList.remove("selected"));
       _atualizarPrecoPizza();
-      if (sabores.length > 0) passo2El.style.display = "block";
+      if (sabores.length > 0) {
+        passo2El.style.display = "block";
+        _scrollModalParaElemento(passo2El);
+      }
     };
     tamGrid.appendChild(btn);
   });
@@ -1745,6 +1736,9 @@ function _renderAcai(cfg, container) {
       card.classList.add("selected");
       _acaiConfig.tamanho = tam;
       _atualizarPrecoPizza();
+      // Scroll para as etapas/acompanhamentos que ficam abaixo do tamanho
+      const _proxSec = btn.closest("section")?.nextElementSibling;
+      if (_proxSec) _scrollModalParaElemento(_proxSec);
     };
     tamGrid.appendChild(card);
   });
@@ -1887,6 +1881,8 @@ function _renderSuco(cfg, container) {
       btn.classList.add("selected");
       _sucoConfig.tamanho = tam;
       _atualizarPrecoPizza();
+      const _proxSecS = btn.closest("section")?.nextElementSibling;
+      if (_proxSecS) _scrollModalParaElemento(_proxSecS);
     };
     tamGrid.appendChild(btn);
   });
@@ -2107,14 +2103,16 @@ function adicionarDoModal() {
     //   Total   = (Base + Extra) * qtd + Borda * qtd
     // ─────────────────────────────────────────────────────────────
     const saboresOk = (_pizzaConfig.sabores || []).filter(Boolean);
-    const _tam2 = _pizzaConfig.tamanhoSelecionado;
-    const _tipo2 = _pizzaConfig.tipoSelecionado;
-    const tamPreco = (_tipo2 && _tam2?.precos?.[_tipo2])
-      ? _tam2.precos[_tipo2]
-      : (_tam2?.preco || 0);
-    const saborExtra = saboresOk.reduce((acc, s) => Math.max(acc, s.preco || 0), 0);
+    const _tam    = _pizzaConfig.tamanhoSelecionado;
+    const _tipo   = _pizzaConfig.tipoSelecionado;
+    // Preço base: usa precos[tipo] se disponível, senão tam.preco
+    const tamPreco = (_tipo && _tam?.precos?.[_tipo])
+      ? _tam.precos[_tipo]
+      : (_tam?.preco || 0);
+    // Regra de ouro: prevalece o sabor mais caro
+    const saborMaisCaro = saboresOk.reduce((acc, s) => Math.max(acc, s.preco || 0), 0);
     const precoBorda = _pizzaConfig.bordaConfig?.preco || 0;
-    precoFinal = tamPreco + saborExtra + precoBorda;
+    precoFinal = tamPreco + saborMaisCaro + precoBorda;
 
     variacao = _pizzaConfig.tamanhoSelecionado?.nome || "";
     const numSab = _pizzaConfig.numSabores || 1;
@@ -3321,6 +3319,53 @@ async function enviarZap() {
         }
       }
 
+      // Gera cashback para o cliente (lógica local — crm.js não é carregado no app)
+      try {
+        const telCashback = telCompleto;
+        if (telCashback && totalGeral > 0) {
+          // Busca configuração de cashback
+          const { data: cfgCash } = await supa
+            .from('configuracoes')
+            .select('cashback_percentual, cashback_validade_dias')
+            .maybeSingle();
+          const pctCash  = cfgCash?.cashback_percentual   ?? 10;
+          const valDias  = cfgCash?.cashback_validade_dias ?? 30;
+          const valorCash = Math.round(totalGeral * pctCash / 100);
+          if (valorCash > 0) {
+            // Busca cliente pelo telefone
+            const telCleanCash = telCashback.replace(/\D/g, '');
+            let { data: cliCash } = await supa
+              .from('clientes')
+              .select('id, saldo_cashback, total_gasto')
+              .or(`telefone.eq.${telCashback},telefone.eq.${telCleanCash}`)
+              .maybeSingle();
+            if (cliCash) {
+              const expiraCash = new Date();
+              expiraCash.setDate(expiraCash.getDate() + valDias);
+              await supa.from('cashback_transacoes').insert([{
+                cliente_id:       cliCash.id,
+                cliente_telefone: telCashback,
+                pedido_id:        pedidoDbId,
+                tipo:             'credito',
+                valor:            valorCash,
+                validade_dias:    valDias,
+                expira_em:        expiraCash.toISOString(),
+                usado:            false,
+              }]);
+              await supa.from('clientes')
+                .update({
+                  saldo_cashback: (cliCash.saldo_cashback || 0) + valorCash,
+                  total_gasto:    (cliCash.total_gasto    || 0) + totalGeral,
+                })
+                .eq('id', cliCash.id);
+              console.log(`✅ Cashback gerado: Gs ${valorCash} para ${telCashback}`);
+            }
+          }
+        }
+      } catch (eCash) {
+        console.warn('Cashback não gerado (não crítico):', eCash.message);
+      }
+
       // Incrementa contador de usos do cupom com UPDATE atômico (evita race condition)
       if (cupomAplicado?.id) {
         await supa
@@ -3616,8 +3661,7 @@ function _atualizarUltimaCompra() {
   }
 
   // Bloqueia botão se não há nada disponível
-  const btnRep = box.querySelector("[onclick='repetirPedido()']")
-               || box.querySelector("[onclick="repetirPedido()"]");
+  const btnRep = box.querySelector("[onclick='repetirPedido()']");
   if (btnRep) {
     btnRep.disabled = !algumDisp;
     btnRep.style.opacity = algumDisp ? "1" : "0.45";
@@ -3893,7 +3937,7 @@ function _iniciarPollingTracking(pedidoId, uid) {
       if (!statusMudou) return; // sem mudança de status — só motoboy pode ter mudado
       _lastTrackedSt = data.status;
 
-      mostrarTracker(data.status, uid);
+      mostrarTracker(data.status, uid, motoboy);
 
       // Notificação push
       if (
@@ -3964,7 +4008,7 @@ function _tentarCanalRealtime(pedidoId, uid) {
             } catch (_) {}
           }
           atualizarTrackingVisual(ns, motoboy);
-          mostrarTracker(ns, uid);
+          mostrarTracker(ns, uid, motoboy);
         },
       )
       .subscribe((st) => {
