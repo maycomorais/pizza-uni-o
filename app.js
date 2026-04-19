@@ -522,46 +522,38 @@ async function verificarHorario() {
   }
 }
 
-// ── Filtra opções de pagamento no checkout conforme features_ativas.pagamentos ──
-// Fonte da verdade de todas as opções disponíveis (usada para recriar o select)
-const _OPCOES_PAGAMENTO = [
-  { value: "Efetivo",        label: "💵 Efectivo (Guaraníes)" },
-  { value: "Cartao",         label: "💳 Tarjeta de Crédito/Débito" },
-  { value: "CartaoBR",       label: "💳🇧🇷 Cartão Brasileiro (R$)" },
-  { value: "Pix",            label: "🟢 Pix (BR)" },
-  { value: "Transferencia",  label: "🏦 Transferencia / Alias (PY)" },
-  { value: "QrPy",           label: "📱 QR Paraguay (Tigo / Personal / Bancard)" },
-  { value: "Multipagamento", label: "🔀 Dividir Pagamento" },
-];
+// ── Auto-scroll do modal ao revelar nova seção ───────────────────────────────
+// Rola a área de scroll do modal até deixar `el` visível com espaço no topo.
+function _scrollModalParaElemento(el) {
+  if (!el) return;
+  const area = document.querySelector(".modal-scroll-area");
+  if (!area) return;
+  // Pequeno delay para o browser ter renderizado o elemento antes de medir
+  requestAnimationFrame(() => {
+    const areaRect = area.getBoundingClientRect();
+    const elRect   = el.getBoundingClientRect();
+    const offset   = elRect.top - areaRect.top + area.scrollTop - 16; // 16px de respiro
+    area.scrollTo({ top: offset, behavior: "smooth" });
+  });
+}
 
+// ── Filtra opções de pagamento no checkout conforme features_ativas.pagamentos ──
 function _aplicarFormasPagamentoCliente(features) {
   const pags = features?.pagamentos;
+  if (!pags) return; // sem config = tudo visível
   const select = document.getElementById("forma-pag");
   if (!select) return;
-
-  // Guarda valor atual para restaurar se ainda habilitado
-  const valorAtual = select.value;
-
-  // Remove todas as opções exceto o placeholder (value="")
   Array.from(select.options).forEach((opt) => {
-    if (opt.value !== "") opt.remove();
+    if (!opt.value) return; // placeholder
+    // CartaoBR é nova feature — oculta se explicitamente false
+    if (opt.value === "CartaoBR") {
+      opt.style.display = pags["CartaoBR"] === false ? "none" : "";
+    } else if (pags[opt.value] === false) {
+      opt.style.display = "none";
+    } else {
+      opt.style.display = "";
+    }
   });
-
-  // Reinsere apenas as habilitadas (sem config = todas ativas)
-  // Usar remove/appendChild é o único método cross-browser confiável
-  // (CSS display:none em <option> não funciona em iOS Safari / Android Chrome)
-  _OPCOES_PAGAMENTO.forEach(({ value, label }) => {
-    if (pags && pags[value] === false) return; // desabilitada pelo adminMaster
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = label;
-    select.appendChild(opt);
-  });
-
-  // Restaura seleção anterior se a opção ainda estiver disponível
-  if (valorAtual && Array.from(select.options).some(o => o.value === valorAtual)) {
-    select.value = valorAtual;
-  }
 }
 
 // Renderiza o Menu (Categories + Produtos com subcategorias)
@@ -1068,6 +1060,7 @@ function _revelarPasso2(p, container) {
       </div>
     </section>`;
   passo2.style.display = "block";
+  _scrollModalParaElemento(passo2);
   // Esconde passos seguintes ao reeditar
   const p3 =
     container.querySelector("#pizza-passo3") ||
@@ -1146,6 +1139,7 @@ function _selecionarDivisao(n) {
 
   p3.innerHTML = html;
   p3.style.display = "block";
+  _scrollModalParaElemento(p3);
 
   // Borda aparece depois
   const p4 = document.getElementById("pizza-passo4");
@@ -1179,6 +1173,10 @@ function _selecionarSaborSlot(slot, nome, preco, el) {
   const cheios = _pizzaConfig.sabores.filter(Boolean).length;
   if (cheios >= n) {
     _revelarPasso4Borda();
+  } else {
+    // Scroll para o próximo slot ainda vazio
+    const proximoSlot = document.getElementById(`pizza-slot-${slot + 1}`);
+    if (proximoSlot) _scrollModalParaElemento(proximoSlot.closest("section") || proximoSlot);
   }
   _atualizarPrecoPizza();
   _atualizarResumo();
@@ -1218,6 +1216,7 @@ function _revelarPasso4Borda() {
     </div>
   </section>`;
   p4.style.display = "block";
+  _scrollModalParaElemento(p4);
 }
 
 function _pizzaSelecionarBorda(nome, preco, el) {
@@ -1441,7 +1440,10 @@ function _renderShake(cfg, container) {
       btn.classList.add("selected");
       _shakeConfig.tamanho = tam;
       _atualizarPrecoPizza();
-      if (sabores.length > 0) passo2El.style.display = "block";
+      if (sabores.length > 0) {
+        passo2El.style.display = "block";
+        _scrollModalParaElemento(passo2El);
+      }
     };
     tamGrid.appendChild(btn);
   });
@@ -1535,7 +1537,10 @@ function _renderSorvete(cfg, container) {
       // Desmarca todos
       container.querySelectorAll("#sorv-sabor-grid .var-card").forEach(c => c.classList.remove("selected"));
       _atualizarPrecoPizza();
-      if (sabores.length > 0) passo2El.style.display = "block";
+      if (sabores.length > 0) {
+        passo2El.style.display = "block";
+        _scrollModalParaElemento(passo2El);
+      }
     };
     tamGrid.appendChild(btn);
   });
@@ -1687,6 +1692,9 @@ function _renderAcai(cfg, container) {
       card.classList.add("selected");
       _acaiConfig.tamanho = tam;
       _atualizarPrecoPizza();
+      // Scroll para as etapas/acompanhamentos que ficam abaixo do tamanho
+      const _proxSec = btn.closest("section")?.nextElementSibling;
+      if (_proxSec) _scrollModalParaElemento(_proxSec);
     };
     tamGrid.appendChild(card);
   });
@@ -1829,6 +1837,8 @@ function _renderSuco(cfg, container) {
       btn.classList.add("selected");
       _sucoConfig.tamanho = tam;
       _atualizarPrecoPizza();
+      const _proxSecS = btn.closest("section")?.nextElementSibling;
+      if (_proxSecS) _scrollModalParaElemento(_proxSecS);
     };
     tamGrid.appendChild(btn);
   });
