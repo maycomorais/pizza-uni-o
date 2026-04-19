@@ -103,26 +103,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (!session) return; // checkUser já redirecionou
 
-    // ── Busca o perfil PRIMEIRO — cargo precisa ser conhecido antes de tudo ──
+    // Verifica se o usuário aceitou o contrato de serviços
+    await verificarContratoAdmin(session);
+
+    // Remove overlay IMEDIATAMENTE após sessão confirmada
+    const overlay = document.getElementById("auth-overlay");
+    if (overlay) overlay.remove();
+
     const { data: perfil } = await supa
       .from("perfis_acesso")
       .select("cargo, nome_display")
       .eq("id", session.user.id)
-      .maybeSingle();
+      .single();
 
     _perfilId = session.user.id;
     _perfilNome = perfil?.nome_display || session.user.email || "Admin";
-    // default "funcionario" → sem perfil nunca aciona contrato nem tem cargo especial
-    perfilUsuario = perfil?.cargo || "funcionario";
-
-    // Contrato obrigatório APENAS para 'dono'. adminMaster e todos os outros: bypass total.
-    if (perfilUsuario === "dono") {
-      await verificarContratoAdmin(session);
-    }
-
-    // Remove overlay IMEDIATAMENTE após sessão e contrato confirmados
-    const overlay = document.getElementById("auth-overlay");
-    if (overlay) overlay.remove();
+    perfilUsuario = perfil ? perfil.cargo : "dono";
 
     // Atualiza sidebar: nome, cargo e email
     const elNomeDisplay = document.getElementById("user-nome-display");
@@ -244,6 +240,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 // 2. CONTROLE DE ABAS
 // =========================================
 function showTab(tabId, event) {
+  console.log("Tentando abrir aba:", tabId);
+  console.log("Event:", event);
+
   // 1. O 'de-para' para garantir que IDs como 'categorias' ou 'motoboys'
   // abram a aba pai correta no seu novo HTML
   let realTabId = tabId;
@@ -251,19 +250,13 @@ function showTab(tabId, event) {
     realTabId = "produtos";
   }
 
-  // ── Guarda de segurança: bloqueia aba desabilitada pelo adminMaster ──────
-  // (vale para qualquer cargo abaixo de adminMaster — mesmo que o usuário
-  //  tente acessar diretamente por código ou URL)
-  if (perfilUsuario && perfilUsuario !== "adminMaster" && !_feat("tabs", realTabId)) {
-    // Redireciona para pedidos (sempre visível) sem produzir loop
-    if (realTabId !== "pedidos") showTab("pedidos", null);
-    return;
-  }
-
   let target = document.getElementById(realTabId);
   if (!target) {
+    console.log("Target not found for", realTabId);
     target = document.getElementById("pedidos");
     realTabId = "pedidos";
+  } else {
+    console.log("Target found:", target);
   }
 
   localStorage.setItem("app_lastTab", realTabId);
@@ -280,6 +273,7 @@ function showTab(tabId, event) {
   // 3. Ativa a aba pai
   target.classList.add("active");
   target.style.display = "block";
+  console.log("Added active class to", realTabId);
 
   // 4. Ativa o botão no menu lateral
   if (event && event.currentTarget) {
@@ -297,9 +291,14 @@ function showTab(tabId, event) {
   // 5. PULO DO GATO: Se a aba for produtos, categorias ou motoboys,
   // precisamos ativar a SUB-ABA correspondente
   if (realTabId === "produtos") {
+    console.log("Calling showSubTab for produtos");
     if (tabId === "categorias") showSubTab("lista-categorias-wrapper");
     else if (tabId === "motoboys") showSubTab("lista-motos-wrapper");
-    else showSubTab("lista-produtos-wrapper");
+    else {
+      // Clique direto em "Produtos": sempre abre a lista de produtos,
+      // ignorando qualquer sub-aba salva de navegação anterior (ex: Categorias).
+      showSubTab("lista-produtos-wrapper");
+    }
   }
 
   // 6. Carregamento de dados
@@ -403,10 +402,6 @@ async function _carregarFeaturesGlobais() {
     .maybeSingle();
   if (!data) return;
   FEATURES_ATIVAS = data.features_ativas || null;
-  // Aplica filtro de formas de pagamento no PDV imediatamente ao carregar
-  _aplicarFormasPagamentoPDV(FEATURES_ATIVAS);
-  // Aplica filtro de pagamentos no PDV imediatamente (não só quando a aba abre)
-  _aplicarFormasPagamentoPDV(FEATURES_ATIVAS);
   // Globals operacionais
   if (data.nome_restaurante) NOME_RESTAURANTE = data.nome_restaurante;
   if (data.whatsapp_loja) WHATSAPP_LOJA_CFG = data.whatsapp_loja;
@@ -2885,12 +2880,15 @@ async function salvarProduto() {
       document.querySelectorAll(".pizza-sabor-row").forEach((row) => {
         const nome = row.querySelector('[data-f="snome"]').value.trim();
         if (!nome) return;
+        const toggleBtn = row.querySelector(".pizza-sabor-toggle-ativo");
+        const ativo = !toggleBtn || toggleBtn.dataset.ativo !== "false";
         sabores.push({
           nome,
-          desc: row.querySelector('[data-f="sdesc"]')?.value?.trim() || "",
-          tipo: row.querySelector('[data-f="stipo"]').value,
-          img: row.querySelector('[data-f="simg"]')?.value || "",
+          desc:  row.querySelector('[data-f="sdesc"]')?.value?.trim() || "",
+          tipo:  row.querySelector('[data-f="stipo"]').value,
+          img:   row.querySelector('[data-f="simg"]')?.value || "",
           preco: 0,
+          ativo,
         });
       });
 
@@ -3290,6 +3288,7 @@ async function abrirModalProduto(produto = null, tipoInicial = null) {
         if (pizzaCfg.sabores && pizzaCfg.sabores.length > 0) {
           document.getElementById("pizza-sabores-lista").innerHTML = "";
           pizzaCfg.sabores.forEach((s) => addPizzaSabor(s));
+          // Drag já é vinculado dentro de addPizzaSabor
         }
       }
       // ── SHAKE ──
@@ -3679,34 +3678,95 @@ function addPizzaSabor(dados = {}) {
   const tipos = _pizzaTiposAtuais();
   const row = document.createElement("div");
   row.className = "pizza-sabor-row";
-  const imgSrc = dados.img || "";
+  row.draggable = true;
+  const imgSrc   = dados.img || "";
+  const isAtivo  = dados.ativo !== false; // default true
   row.innerHTML = `
     <div class="pizza-sabor-main" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-      <input data-f="snome" class="form-control" value="${dados.nome || ""}" placeholder="Nome do sabor" style="flex:2;min-width:140px">
-      <select data-f="stipo" class="form-control pizza-sabor-tipo" style="flex:1;min-width:110px">
+      <span class="drag-handle" title="Arrastar para reordenar"
+        style="cursor:grab;font-size:1.1rem;color:#aaa;padding:0 4px;user-select:none">⠿</span>
+      <input data-f="snome" class="form-control" value="${dados.nome || ""}" placeholder="Nome do sabor" style="flex:2;min-width:120px">
+      <select data-f="stipo" class="form-control pizza-sabor-tipo" style="flex:1;min-width:100px">
         ${
           tipos.length
-            ? tipos
-                .map(
-                  (t) =>
-                    `<option value="${t}" ${dados.tipo === t ? "selected" : ""}>${t}</option>`,
-                )
-                .join("")
+            ? tipos.map(t =>
+                `<option value="${t}" ${dados.tipo === t ? "selected" : ""}>${t}</option>`
+              ).join("")
             : `<option value="${dados.tipo || ""}">${dados.tipo || "—"}</option>`
         }
       </select>
-      <button class="btn btn-sm btn-danger" onclick="this.closest('.pizza-sabor-row').remove()">✕</button>
+      <button type="button" class="btn btn-sm pizza-sabor-toggle-ativo"
+        data-ativo="${isAtivo}"
+        style="background:${isAtivo ? "#27ae60" : "#e74c3c"};color:#fff;border:none;
+               border-radius:6px;padding:4px 9px;cursor:pointer;font-size:0.78rem;white-space:nowrap"
+        onclick="pizzaSaborToggleAtivo(this)">
+        ${isAtivo ? "✅ Ativo" : "⏸ Pausado"}
+      </button>
+      <button type="button" class="btn btn-sm btn-danger" onclick="this.closest('.pizza-sabor-row').remove()">✕</button>
     </div>
     <textarea data-f="sdesc" class="form-control" rows="1" placeholder="Descrição (opcional)" style="margin-bottom:6px">${dados.desc || ""}</textarea>
     <div style="display:flex;gap:8px;align-items:center">
-      ${imgSrc ? `<img src="${imgSrc}" style="width:40px;height:40px;border-radius:6px;object-fit:cover">` : ""}
+      ${imgSrc ? `<img src="${imgSrc}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;flex-shrink:0">` : ""}
       <input data-f="simg" type="text" class="form-control" value="${imgSrc}" placeholder="URL da imagem (opcional)" style="flex:1;font-size:0.8rem">
       <label style="cursor:pointer;background:#e8f4fd;border:1px solid #3498db;border-radius:6px;padding:5px 8px;font-size:0.75rem;white-space:nowrap">
         📷 <input type="file" accept="image/*" style="display:none" onchange="uploadSaborImagem(this, this.closest('.pizza-sabor-row'))">
       </label>
     </div>
   `;
+  _pizzaSaborDragBind(row);
   lista.appendChild(row);
+}
+
+function pizzaSaborToggleAtivo(btn) {
+  const atual = btn.dataset.ativo === "true";
+  const novo  = !atual;
+  btn.dataset.ativo = String(novo);
+  btn.style.background = novo ? "#27ae60" : "#e74c3c";
+  btn.textContent = novo ? "✅ Ativo" : "⏸ Pausado";
+}
+
+// ── Drag & Drop nativo para reordenar sabores ──────────────────
+let _dragSaborRow = null;
+
+function _pizzaSaborDragBind(row) {
+  row.addEventListener("dragstart", e => {
+    _dragSaborRow = row;
+    row.style.opacity = "0.4";
+    e.dataTransfer.effectAllowed = "move";
+  });
+  row.addEventListener("dragend", () => {
+    row.style.opacity = "";
+    _dragSaborRow = null;
+    // Remove indicadores visuais
+    document.querySelectorAll(".pizza-sabor-row").forEach(r => r.classList.remove("drag-over"));
+  });
+  row.addEventListener("dragover", e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (_dragSaborRow && _dragSaborRow !== row) {
+      row.classList.add("drag-over");
+    }
+  });
+  row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+  row.addEventListener("drop", e => {
+    e.preventDefault();
+    row.classList.remove("drag-over");
+    if (!_dragSaborRow || _dragSaborRow === row) return;
+    const lista = document.getElementById("pizza-sabores-lista");
+    const rows  = [...lista.querySelectorAll(".pizza-sabor-row")];
+    const fromIdx = rows.indexOf(_dragSaborRow);
+    const toIdx   = rows.indexOf(row);
+    if (fromIdx < toIdx) {
+      lista.insertBefore(_dragSaborRow, row.nextSibling);
+    } else {
+      lista.insertBefore(_dragSaborRow, row);
+    }
+  });
+}
+
+// Inicializa drag em sabores existentes (chamado ao abrir modal de edição)
+function _pizzaSaboresDragInit() {
+  document.querySelectorAll("#pizza-sabores-lista .pizza-sabor-row").forEach(_pizzaSaborDragBind);
 }
 
 async function uploadSaborImagem(fileInput, row) {
@@ -7896,6 +7956,16 @@ function atualizarCarrinhoPDV() {
   lista.innerHTML = "";
   let total = 0;
 
+  const cashDesc = pdvGetCashbackDesconto(total);
+  total = Math.max(0, total - cashDesc);
+  // Se quiser exibir linha de cashback no resumo, atualize o elemento:
+  const elCash = document.getElementById("pdv-row-cashback");
+  if (elCash) {
+    elCash.style.display = cashDesc > 0 ? "flex" : "none";
+    const elCashVal = document.getElementById("balcao-cashback");
+    if (elCashVal) elCashVal.textContent = cashDesc.toLocaleString("es-PY");
+  }
+
   // ── Itens existentes da mesa (snapshot do DB) ──────────────────
   const itensExistentes = window._mesaAbertaPedido
     ? Array.isArray(window._mesaAbertaPedido.itens)
@@ -7967,16 +8037,6 @@ function atualizarCarrinhoPDV() {
   if (itensExistentes.length === 0 && carrinhoPDV.length === 0) {
     lista.innerHTML =
       '<tr><td colspan="4" class="pdv-lista-vazio">Nenhum item adicionado.</td></tr>';
-  }
-
-  // ── Cashback — aplicado após somar todos os itens ──────────────
-  const cashDesc = pdvGetCashbackDesconto(total);
-  total = Math.max(0, total - cashDesc);
-  const elCash = document.getElementById("pdv-row-cashback");
-  if (elCash) {
-    elCash.style.display = cashDesc > 0 ? "flex" : "none";
-    const elCashVal = document.getElementById("balcao-cashback");
-    if (elCashVal) elCashVal.textContent = cashDesc.toLocaleString("es-PY");
   }
 
   if (totalEl) totalEl.innerText = total.toLocaleString("es-PY");
@@ -10841,11 +10901,11 @@ async function verificarContratoAdmin(session) {
       .eq("id", session.user.id)
       .maybeSingle();
 
-    // Se não tem perfil, não é dono — não exibe contrato
-    const cargo = perfil?.cargo || null;
+    const cargo = perfil?.cargo || "dono";
 
-    // Contrato obrigatório APENAS para dono. adminMaster e demais cargos: bypass.
-    if (!cargo || cargo !== "dono") return;
+    // adminMaster e outros cargos não precisam assinar
+    if (cargo === "adminMaster") return;
+    if (cargo !== "dono") return;
 
     // Verifica se o dono já aceitou
     const { data } = await supa
