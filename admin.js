@@ -240,9 +240,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 // 2. CONTROLE DE ABAS
 // =========================================
 function showTab(tabId, event) {
-  console.log("Tentando abrir aba:", tabId);
-  console.log("Event:", event);
-
   // 1. O 'de-para' para garantir que IDs como 'categorias' ou 'motoboys'
   // abram a aba pai correta no seu novo HTML
   let realTabId = tabId;
@@ -250,13 +247,19 @@ function showTab(tabId, event) {
     realTabId = "produtos";
   }
 
+  // ── Guarda de segurança: bloqueia aba desabilitada pelo adminMaster ──────
+  // (vale para qualquer cargo abaixo de adminMaster — mesmo que o usuário
+  //  tente acessar diretamente por código ou URL)
+  if (perfilUsuario && perfilUsuario !== "adminMaster" && !_feat("tabs", realTabId)) {
+    // Redireciona para pedidos (sempre visível) sem produzir loop
+    if (realTabId !== "pedidos") showTab("pedidos", null);
+    return;
+  }
+
   let target = document.getElementById(realTabId);
   if (!target) {
-    console.log("Target not found for", realTabId);
     target = document.getElementById("pedidos");
     realTabId = "pedidos";
-  } else {
-    console.log("Target found:", target);
   }
 
   localStorage.setItem("app_lastTab", realTabId);
@@ -273,7 +276,6 @@ function showTab(tabId, event) {
   // 3. Ativa a aba pai
   target.classList.add("active");
   target.style.display = "block";
-  console.log("Added active class to", realTabId);
 
   // 4. Ativa o botão no menu lateral
   if (event && event.currentTarget) {
@@ -291,14 +293,9 @@ function showTab(tabId, event) {
   // 5. PULO DO GATO: Se a aba for produtos, categorias ou motoboys,
   // precisamos ativar a SUB-ABA correspondente
   if (realTabId === "produtos") {
-    console.log("Calling showSubTab for produtos");
     if (tabId === "categorias") showSubTab("lista-categorias-wrapper");
     else if (tabId === "motoboys") showSubTab("lista-motos-wrapper");
-    else {
-      // Clique direto em "Produtos": sempre abre a lista de produtos,
-      // ignorando qualquer sub-aba salva de navegação anterior (ex: Categorias).
-      showSubTab("lista-produtos-wrapper");
-    }
+    else showSubTab("lista-produtos-wrapper");
   }
 
   // 6. Carregamento de dados
@@ -402,6 +399,8 @@ async function _carregarFeaturesGlobais() {
     .maybeSingle();
   if (!data) return;
   FEATURES_ATIVAS = data.features_ativas || null;
+  // Aplica filtro de pagamentos no PDV imediatamente (não só quando a aba abre)
+  _aplicarFormasPagamentoPDV(FEATURES_ATIVAS);
   // Globals operacionais
   if (data.nome_restaurante) NOME_RESTAURANTE = data.nome_restaurante;
   if (data.whatsapp_loja) WHATSAPP_LOJA_CFG = data.whatsapp_loja;
@@ -7891,6 +7890,16 @@ function atualizarCarrinhoPDV() {
   lista.innerHTML = "";
   let total = 0;
 
+  const cashDesc = pdvGetCashbackDesconto(total);
+  total = Math.max(0, total - cashDesc);
+  // Se quiser exibir linha de cashback no resumo, atualize o elemento:
+  const elCash = document.getElementById("pdv-row-cashback");
+  if (elCash) {
+    elCash.style.display = cashDesc > 0 ? "flex" : "none";
+    const elCashVal = document.getElementById("balcao-cashback");
+    if (elCashVal) elCashVal.textContent = cashDesc.toLocaleString("es-PY");
+  }
+
   // ── Itens existentes da mesa (snapshot do DB) ──────────────────
   const itensExistentes = window._mesaAbertaPedido
     ? Array.isArray(window._mesaAbertaPedido.itens)
@@ -7962,16 +7971,6 @@ function atualizarCarrinhoPDV() {
   if (itensExistentes.length === 0 && carrinhoPDV.length === 0) {
     lista.innerHTML =
       '<tr><td colspan="4" class="pdv-lista-vazio">Nenhum item adicionado.</td></tr>';
-  }
-
-  // ── Cashback — aplicado após somar todos os itens ──────────────
-  const cashDesc = pdvGetCashbackDesconto(total);
-  total = Math.max(0, total - cashDesc);
-  const elCash = document.getElementById("pdv-row-cashback");
-  if (elCash) {
-    elCash.style.display = cashDesc > 0 ? "flex" : "none";
-    const elCashVal = document.getElementById("balcao-cashback");
-    if (elCashVal) elCashVal.textContent = cashDesc.toLocaleString("es-PY");
   }
 
   if (totalEl) totalEl.innerText = total.toLocaleString("es-PY");
@@ -10836,11 +10835,11 @@ async function verificarContratoAdmin(session) {
       .eq("id", session.user.id)
       .maybeSingle();
 
-    const cargo = perfil?.cargo || "dono";
+    // Se não tem perfil, não é dono — não exibe contrato
+    const cargo = perfil?.cargo || null;
 
-    // adminMaster e outros cargos não precisam assinar
-    if (cargo === "adminMaster") return;
-    if (cargo !== "dono") return;
+    // Contrato obrigatório APENAS para dono. adminMaster e demais cargos: bypass.
+    if (!cargo || cargo !== "dono") return;
 
     // Verifica se o dono já aceitou
     const { data } = await supa
