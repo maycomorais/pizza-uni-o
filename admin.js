@@ -103,22 +103,26 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (!session) return; // checkUser já redirecionou
 
-    // Verifica se o usuário aceitou o contrato de serviços
-    await verificarContratoAdmin(session);
-
-    // Remove overlay IMEDIATAMENTE após sessão confirmada
-    const overlay = document.getElementById("auth-overlay");
-    if (overlay) overlay.remove();
-
+    // ── Busca o perfil PRIMEIRO — cargo precisa ser conhecido antes de tudo ──
     const { data: perfil } = await supa
       .from("perfis_acesso")
       .select("cargo, nome_display")
       .eq("id", session.user.id)
-      .single();
+      .maybeSingle();
 
     _perfilId = session.user.id;
     _perfilNome = perfil?.nome_display || session.user.email || "Admin";
-    perfilUsuario = perfil ? perfil.cargo : "dono";
+    // default "funcionario" → sem perfil nunca aciona contrato nem tem cargo especial
+    perfilUsuario = perfil?.cargo || "funcionario";
+
+    // Contrato obrigatório APENAS para 'dono'. adminMaster e todos os outros: bypass total.
+    if (perfilUsuario === "dono") {
+      await verificarContratoAdmin(session);
+    }
+
+    // Remove overlay IMEDIATAMENTE após sessão e contrato confirmados
+    const overlay = document.getElementById("auth-overlay");
+    if (overlay) overlay.remove();
 
     // Atualiza sidebar: nome, cargo e email
     const elNomeDisplay = document.getElementById("user-nome-display");
@@ -399,6 +403,8 @@ async function _carregarFeaturesGlobais() {
     .maybeSingle();
   if (!data) return;
   FEATURES_ATIVAS = data.features_ativas || null;
+  // Aplica filtro de formas de pagamento no PDV imediatamente ao carregar
+  _aplicarFormasPagamentoPDV(FEATURES_ATIVAS);
   // Aplica filtro de pagamentos no PDV imediatamente (não só quando a aba abre)
   _aplicarFormasPagamentoPDV(FEATURES_ATIVAS);
   // Globals operacionais
@@ -7890,16 +7896,6 @@ function atualizarCarrinhoPDV() {
   lista.innerHTML = "";
   let total = 0;
 
-  const cashDesc = pdvGetCashbackDesconto(total);
-  total = Math.max(0, total - cashDesc);
-  // Se quiser exibir linha de cashback no resumo, atualize o elemento:
-  const elCash = document.getElementById("pdv-row-cashback");
-  if (elCash) {
-    elCash.style.display = cashDesc > 0 ? "flex" : "none";
-    const elCashVal = document.getElementById("balcao-cashback");
-    if (elCashVal) elCashVal.textContent = cashDesc.toLocaleString("es-PY");
-  }
-
   // ── Itens existentes da mesa (snapshot do DB) ──────────────────
   const itensExistentes = window._mesaAbertaPedido
     ? Array.isArray(window._mesaAbertaPedido.itens)
@@ -7971,6 +7967,16 @@ function atualizarCarrinhoPDV() {
   if (itensExistentes.length === 0 && carrinhoPDV.length === 0) {
     lista.innerHTML =
       '<tr><td colspan="4" class="pdv-lista-vazio">Nenhum item adicionado.</td></tr>';
+  }
+
+  // ── Cashback — aplicado após somar todos os itens ──────────────
+  const cashDesc = pdvGetCashbackDesconto(total);
+  total = Math.max(0, total - cashDesc);
+  const elCash = document.getElementById("pdv-row-cashback");
+  if (elCash) {
+    elCash.style.display = cashDesc > 0 ? "flex" : "none";
+    const elCashVal = document.getElementById("balcao-cashback");
+    if (elCashVal) elCashVal.textContent = cashDesc.toLocaleString("es-PY");
   }
 
   if (totalEl) totalEl.innerText = total.toLocaleString("es-PY");

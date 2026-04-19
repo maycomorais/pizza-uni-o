@@ -523,22 +523,45 @@ async function verificarHorario() {
 }
 
 // ── Filtra opções de pagamento no checkout conforme features_ativas.pagamentos ──
+// Fonte da verdade de todas as opções disponíveis (usada para recriar o select)
+const _OPCOES_PAGAMENTO = [
+  { value: "Efetivo",        label: "💵 Efectivo (Guaraníes)" },
+  { value: "Cartao",         label: "💳 Tarjeta de Crédito/Débito" },
+  { value: "CartaoBR",       label: "💳🇧🇷 Cartão Brasileiro (R$)" },
+  { value: "Pix",            label: "🟢 Pix (BR)" },
+  { value: "Transferencia",  label: "🏦 Transferencia / Alias (PY)" },
+  { value: "QrPy",           label: "📱 QR Paraguay (Tigo / Personal / Bancard)" },
+  { value: "Multipagamento", label: "🔀 Dividir Pagamento" },
+];
+
 function _aplicarFormasPagamentoCliente(features) {
   const pags = features?.pagamentos;
-  if (!pags) return; // sem config = tudo visível
   const select = document.getElementById("forma-pag");
   if (!select) return;
+
+  // Guarda valor atual para restaurar se ainda habilitado
+  const valorAtual = select.value;
+
+  // Remove todas as opções exceto o placeholder (value="")
   Array.from(select.options).forEach((opt) => {
-    if (!opt.value) return; // placeholder
-    // CartaoBR é nova feature — oculta se explicitamente false
-    if (opt.value === "CartaoBR") {
-      opt.style.display = pags["CartaoBR"] === false ? "none" : "";
-    } else if (pags[opt.value] === false) {
-      opt.style.display = "none";
-    } else {
-      opt.style.display = "";
-    }
+    if (opt.value !== "") opt.remove();
   });
+
+  // Reinsere apenas as habilitadas (sem config = todas ativas)
+  // Usar remove/appendChild é o único método cross-browser confiável
+  // (CSS display:none em <option> não funciona em iOS Safari / Android Chrome)
+  _OPCOES_PAGAMENTO.forEach(({ value, label }) => {
+    if (pags && pags[value] === false) return; // desabilitada pelo adminMaster
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    select.appendChild(opt);
+  });
+
+  // Restaura seleção anterior se a opção ainda estiver disponível
+  if (valorAtual && Array.from(select.options).some(o => o.value === valorAtual)) {
+    select.value = valorAtual;
+  }
 }
 
 // Renderiza o Menu (Categories + Produtos com subcategorias)
