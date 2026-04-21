@@ -586,7 +586,7 @@ select.form-control, select.input-modern {
 .pdv-layout {
     display: grid;
     grid-template-columns: 1fr 330px;
-    height: calc(100vh - 170px);
+    height: 100vh;
     border-radius: 10px;
     overflow: hidden;
     border: 1px solid #ccc;
