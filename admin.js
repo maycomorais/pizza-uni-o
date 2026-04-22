@@ -10844,8 +10844,8 @@ function ftMostrarPanel(panel) {
     const btn = document.getElementById(`ft-nav-${p}`);
     if (el) el.style.display = p === panel ? "block" : "none";
     if (btn) {
-      btn.classList.toggle("btn-primary", p === panel);
-      btn.classList.toggle("btn-secondary", p !== panel);
+      // ft-tab-ativo = fundo preenchido; sem ela = outline com texto/borda coloridos
+      btn.classList.toggle("ft-tab-ativo", p === panel);
     }
   });
 }
